@@ -6248,4 +6248,91 @@ mod tests {
             "the new worktree workspace should use the same agent (Codex) that was selected in the original panel",
         );
     }
+
+    /// Regression test: when the panel's serialized last-active-thread points to
+    /// a session that no longer exists in the threads database, the panel should
+    /// still be able to open a new thread.
+    #[gpui::test]
+    async fn test_new_thread_after_stale_thread_in_database(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+        let project = Project::test(fs.clone(), [], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| workspace.set_random_database_id());
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        // Write serialized panel state with a native-agent thread whose
+        // session_id does NOT exist in the threads database.
+        let workspace_id = workspace.read_with(cx, |ws, _| ws.database_id().unwrap());
+        let kvp = cx.update(|_, cx| KeyValueStore::global(cx));
+        let serialized = SerializedAgentPanel {
+            width: Some(px(300.0)),
+            selected_agent: Some(AgentType::NativeAgent),
+            last_active_thread: Some(SerializedActiveThread {
+                session_id: "stale-thread-00000000-0000-0000-0000-000000000000".to_string(),
+                agent_type: AgentType::NativeAgent,
+                title: Some("Old thread that was deleted".to_string()),
+                work_dirs: None,
+            }),
+            start_thread_in: None,
+        };
+        save_serialized_panel(workspace_id, serialized, kvp)
+            .await
+            .expect("serialized panel should be saved");
+
+        // Load the panel. Because the session id is stale the panel will log
+        // "last active thread … not found in database, skipping restoration"
+        // and leave the active view as Uninitialized.
+        let prompt_builder = Arc::new(prompt_store::PromptBuilder::new(None).unwrap());
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let panel = AgentPanel::load(workspace.downgrade(), prompt_builder, async_cx)
+            .await
+            .expect("panel load should succeed even with a stale thread id");
+        cx.run_until_parked();
+
+        // Sanity-check: no thread should have been restored.
+        panel.read_with(cx, |panel, _cx| {
+            assert!(
+                panel.active_conversation_view().is_none(),
+                "no conversation view should exist after a failed thread restoration"
+            );
+        });
+
+        // Now open a new thread via the NewThread action – this is what the
+        // user would do after encountering the stale-thread warning. This goes
+        // through the real NativeAgentServer path (not a stub).
+        panel.update_in(cx, |panel, window, cx| {
+            panel.new_thread(&NewThread, window, cx);
+        });
+        cx.run_until_parked();
+
+        // The panel should transition to a usable state with an active,
+        // connected thread.
+        panel.read_with(cx, |panel, cx| {
+            assert!(
+                panel.active_conversation_view().is_some(),
+                "panel should have a conversation view after opening a new thread"
+            );
+            assert!(
+                panel.active_agent_thread(cx).is_some(),
+                "panel should have an active, connected agent thread"
+            );
+        });
+    }
 }
