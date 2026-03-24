@@ -10264,6 +10264,7 @@ dependencies = [
  "theme",
  "ui",
  "urlencoding",
+ "util",
  "workspace",
  "zed_actions",
 ]
