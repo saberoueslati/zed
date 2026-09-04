@@ -27828,7 +27828,6 @@ async fn test_restoring_hunks_in_folded_buffer_unfolds_it(cx: &mut TestAppContex
     let (editor, cx) = cx
         .add_window_view(|window, cx| build_editor_with_project(project, multibuffer, window, cx));
     editor.update_in(cx, |editor, _window, cx| {
-        editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyUnstagedDiffHunkDelegate)), cx);
         for (buffer, base_text) in [
             (buffer_1.clone(), base_text_1),
             (buffer_2.clone(), base_text_2),
@@ -41910,6 +41909,88 @@ async fn test_edit_actions_in_folded_buffer_match_the_expanded_buffer(cx: &mut T
     }
 
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+#[gpui::test]
+async fn test_delete_line_in_folded_buffer_with_inner_crease_matches_expanded_buffer(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut outcomes = Vec::new();
+    for collapse_buffer in [false, true] {
+        let (editor, window_cx) = cx.add_window_view(|window, cx| {
+            let multi_buffer = MultiBuffer::build_multi(
+                [
+                    ("zero\none\ntwo\nthree\n", vec![Point::row_range(0..4)]),
+                    ("other\n", vec![Point::row_range(0..1)]),
+                ],
+                cx,
+            );
+            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        });
+        let mut editor_cx = EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
+        let buffer_ids = editor_cx.multibuffer(|multi_buffer, cx| {
+            multi_buffer
+                .snapshot(cx)
+                .excerpts()
+                .map(|excerpt| excerpt.context.start.buffer_id)
+                .collect::<Vec<_>>()
+        });
+
+        outcomes.push(editor_cx.update_editor(|editor, window, cx| {
+            editor.fold_creases(
+                vec![Crease::simple(
+                    Point::new(0, 1)..Point::new(2, 2),
+                    FoldPlaceholder::test(),
+                )],
+                true,
+                window,
+                cx,
+            );
+            if collapse_buffer {
+                editor.fold_buffer(buffer_ids[0], cx);
+            }
+
+            let caret = {
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                snapshot
+                    .anchor_in_excerpt(
+                        snapshot
+                            .buffer_for_id(buffer_ids[0])
+                            .expect("the first buffer is in the multibuffer")
+                            .anchor_before(Point::new(1, 1)),
+                    )
+                    .expect("the caret is inside the first buffer's excerpt")
+            };
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([caret..caret])
+            });
+            editor.delete_line(&DeleteLine, window, cx);
+
+            let text_of = |buffer_id, cx: &mut Context<Editor>| {
+                editor
+                    .buffer()
+                    .read(cx)
+                    .all_buffers()
+                    .into_iter()
+                    .find(|buffer| buffer.read(cx).remote_id() == buffer_id)
+                    .expect("the edited buffer is still in the multibuffer")
+                    .read(cx)
+                    .text()
+            };
+            (
+                text_of(buffer_ids[0], cx),
+                text_of(buffer_ids[1], cx),
+                editor.is_buffer_folded(buffer_ids[0], cx),
+            )
+        }));
+    }
+
+    assert_eq!(outcomes[0].0, "three\n");
+    assert_eq!(outcomes[0].1, "other\n");
+    assert_eq!(outcomes[1], outcomes[0]);
+    assert!(!outcomes[1].2, "editing must expand the collapsed buffer");
 }
 
 #[gpui::test]

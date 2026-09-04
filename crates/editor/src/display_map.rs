@@ -2198,7 +2198,10 @@ impl DisplaySnapshot {
         point: MultiBufferPoint,
     ) -> MultiBufferPoint {
         if self.is_line_in_folded_buffer(MultiBufferRow(point.row)) {
-            MultiBufferPoint::new(point.row, 0)
+            let wrap_snapshot = self.wrap_snapshot();
+            let mut wrap_point = wrap_snapshot.make_wrap_point(point, Bias::Left);
+            wrap_point.0.column = 0;
+            wrap_snapshot.to_point(wrap_point, Bias::Left)
         } else {
             self.prev_line_boundary(point).0
         }
@@ -2211,10 +2214,10 @@ impl DisplaySnapshot {
         point: MultiBufferPoint,
     ) -> MultiBufferPoint {
         if self.is_line_in_folded_buffer(MultiBufferRow(point.row)) {
-            MultiBufferPoint::new(
-                point.row,
-                self.buffer_snapshot().line_len(MultiBufferRow(point.row)),
-            )
+            let wrap_snapshot = self.wrap_snapshot();
+            let mut wrap_point = wrap_snapshot.make_wrap_point(point, Bias::Right);
+            wrap_point.0.column = wrap_snapshot.line_len(wrap_point.row());
+            wrap_snapshot.to_point(wrap_point, Bias::Right)
         } else {
             self.next_line_boundary(point).0
         }
