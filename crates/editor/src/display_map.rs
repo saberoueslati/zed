@@ -2198,10 +2198,11 @@ impl DisplaySnapshot {
         point: MultiBufferPoint,
     ) -> MultiBufferPoint {
         if self.is_line_in_folded_buffer(MultiBufferRow(point.row)) {
-            let wrap_snapshot = self.wrap_snapshot();
-            let mut wrap_point = wrap_snapshot.make_wrap_point(point, Bias::Left);
-            wrap_point.0.column = 0;
-            wrap_snapshot.to_point(wrap_point, Bias::Left)
+            let mut inlay_point = self.inlay_snapshot().to_inlay_point(point);
+            let mut fold_point = self.fold_snapshot().to_fold_point(inlay_point, Bias::Left);
+            fold_point.0.column = 0;
+            inlay_point = fold_point.to_inlay_point(self.fold_snapshot());
+            self.inlay_snapshot().to_buffer_point(inlay_point)
         } else {
             self.prev_line_boundary(point).0
         }
@@ -2214,10 +2215,11 @@ impl DisplaySnapshot {
         point: MultiBufferPoint,
     ) -> MultiBufferPoint {
         if self.is_line_in_folded_buffer(MultiBufferRow(point.row)) {
-            let wrap_snapshot = self.wrap_snapshot();
-            let mut wrap_point = wrap_snapshot.make_wrap_point(point, Bias::Right);
-            wrap_point.0.column = wrap_snapshot.line_len(wrap_point.row());
-            wrap_snapshot.to_point(wrap_point, Bias::Right)
+            let mut inlay_point = self.inlay_snapshot().to_inlay_point(point);
+            let mut fold_point = self.fold_snapshot().to_fold_point(inlay_point, Bias::Right);
+            fold_point.0.column = self.fold_snapshot().line_len(fold_point.row());
+            inlay_point = fold_point.to_inlay_point(self.fold_snapshot());
+            self.inlay_snapshot().to_buffer_point(inlay_point)
         } else {
             self.next_line_boundary(point).0
         }

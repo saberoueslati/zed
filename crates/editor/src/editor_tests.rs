@@ -41994,6 +41994,58 @@ async fn test_delete_line_in_folded_buffer_with_inner_crease_matches_expanded_bu
 }
 
 #[gpui::test]
+async fn test_line_boundaries_in_folded_buffer_ignore_soft_wraps(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, window_cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                (
+                    "abcdefghijklmnopqrstuvwxyz\nfirst-other\n",
+                    vec![Point::row_range(0..2)],
+                ),
+                ("second-other\n", vec![Point::row_range(0..1)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+    let mut editor_cx = EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
+    let first_buffer_id = editor_cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .next()
+            .expect("the first buffer has an excerpt")
+            .context
+            .start
+            .buffer_id
+    });
+
+    editor_cx.update_editor(|editor, _, cx| {
+        editor.set_wrap_width(Some(30.0.into()), cx);
+        let snapshot = editor.display_snapshot(cx);
+        assert!(
+            Point::new(1, 0).to_display_point(&snapshot).row().0 > 1,
+            "the first line must be soft wrapped"
+        );
+
+        editor.fold_buffer(first_buffer_id, cx);
+        let snapshot = editor.display_snapshot(cx);
+        let point = Point::new(0, 6);
+        assert!(snapshot.is_line_in_folded_buffer(MultiBufferRow(point.row)));
+        assert_eq!(
+            snapshot.prev_line_boundary_ignoring_collapsed_buffers(point),
+            Point::new(0, 0)
+        );
+        assert_eq!(
+            snapshot.next_line_boundary_ignoring_collapsed_buffers(point),
+            Point::new(0, 26)
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_selecting_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
